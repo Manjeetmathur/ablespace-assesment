@@ -10,7 +10,7 @@ interface AuthContextType {
   loginAsGuest: () => Promise<void>;
   loginUser: (email: string, password?: string) => Promise<void>;
   registerUser: (name: string, email: string, password?: string) => Promise<void>;
-  loginWithGoogleUser: (data: { credential?: string; email?: string; name?: string; avatar?: string; googleId?: string }) => Promise<void>;
+  loginWithGoogleUser: (data: { credential?: string; accessToken?: string; email?: string; name?: string; avatar?: string; googleId?: string }) => Promise<void>;
   updateUser: (data: Partial<UserProfile>) => Promise<void>;
   logout: () => void;
 }
@@ -67,7 +67,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setIsLoading(false);
   };
 
-  const loginWithGoogleUser = async (data: { credential?: string; email?: string; name?: string; avatar?: string; googleId?: string }) => {
+  const loginWithGoogleUser = async (data: { credential?: string; accessToken?: string; email?: string; name?: string; avatar?: string; googleId?: string }) => {
     setIsLoading(true);
     const res = await loginWithGoogle(data);
     localStorage.setItem('auth_token', res.token);

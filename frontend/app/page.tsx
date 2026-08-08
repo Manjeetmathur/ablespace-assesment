@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -15,58 +15,43 @@ export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // If already authenticated, redirect to /tasks
+  const googleInitializedRef = useRef(false);
+
+  // Redirect if already logged in
   useEffect(() => {
     if (isAuthenticated) {
       router.push('/tasks');
     }
   }, [isAuthenticated, router]);
 
-  // Initialize Google Identity Services (GIS) OAuth SDK
+  // Load Google GIS SDK script
   useEffect(() => {
     const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
-    if (googleClientId && typeof window !== 'undefined') {
+    if (!googleClientId || typeof window === 'undefined' || googleInitializedRef.current) return;
+
+    const scriptId = 'google-gsi-sdk';
+    if (!document.getElementById(scriptId)) {
       const script = document.createElement('script');
+      script.id = scriptId;
       script.src = 'https://accounts.google.com/gsi/client';
       script.async = true;
       script.defer = true;
       script.onload = () => {
-        if ((window as any).google?.accounts?.id) {
-          (window as any).google.accounts.id.initialize({
-            client_id: googleClientId,
-            callback: handleGoogleResponse,
-          });
-        }
+        googleInitializedRef.current = true;
       };
       document.body.appendChild(script);
     }
   }, []);
 
-  const handleGoogleResponse = async (response: any) => {
+  const handleGuestLogin = async () => {
     setIsLoading(true);
     setErrorMessage(null);
     try {
-      if (response.credential) {
-        await loginWithGoogleUser({ credential: response.credential });
-        router.push('/tasks');
-      } else {
-        setErrorMessage('Google OAuth authentication failed.');
-      }
-    } catch (error: any) {
-      console.error('Google login error:', error);
-      setErrorMessage(error.message || 'Failed to authenticate with Google.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleGuestLogin = async () => {
-    setIsLoading(true);
-    try {
       await loginAsGuest();
       router.push('/tasks');
-    } catch (error) {
+    } catch (error: any) {
       console.error('Guest login error:', error);
+      setErrorMessage('Failed to login as guest. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -76,24 +61,54 @@ export default function LoginPage() {
     setErrorMessage(null);
     const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
 
-    if (googleClientId && (window as any).google?.accounts?.id) {
-      // Trigger official Google One-Tap / OAuth Sign-In Popup
-      (window as any).google.accounts.id.prompt((notification: any) => {
-        if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
-          // Fallback to Google OAuth 2.0 Web Auth Redirect if One-Tap prompt is dismissed
-          const redirectUri = window.location.origin;
-          const targetUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${encodeURIComponent(googleClientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=id_token&scope=openid%20email%20profile&nonce=${Date.now()}`;
-          window.location.href = targetUrl;
-        }
-      });
-    } else {
-      // Direct OAuth fallback prompt for client_id configuration
-      const enteredClientId = prompt('Google Client ID (NEXT_PUBLIC_GOOGLE_CLIENT_ID) is not set in env.\nEnter your Google Client ID to sign in with Google OAuth:');
-      if (enteredClientId) {
-        const redirectUri = window.location.origin;
-        const targetUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${encodeURIComponent(enteredClientId.trim())}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=id_token&scope=openid%20email%20profile&nonce=${Date.now()}`;
-        window.location.href = targetUrl;
+    // Option 1: Official Google OAuth 2.0 Token Client Popup
+    if (googleClientId && (window as any).google?.accounts?.oauth2) {
+      try {
+        const client = (window as any).google.accounts.oauth2.initTokenClient({
+          client_id: googleClientId,
+          scope: 'openid email profile',
+          callback: async (tokenResponse: any) => {
+            if (tokenResponse && tokenResponse.access_token) {
+              setIsLoading(true);
+              try {
+                await loginWithGoogleUser({ accessToken: tokenResponse.access_token });
+                router.push('/tasks');
+              } catch (err: any) {
+                setErrorMessage(err.message || 'Google login failed.');
+              } finally {
+                setIsLoading(false);
+              }
+            }
+          },
+        });
+        client.requestAccessToken();
+        return;
+      } catch (err) {
+        console.warn('Token client popup fallback', err);
       }
+    }
+
+    // Option 2: Web OAuth Redirect fallback
+    if (googleClientId) {
+      const redirectUri = window.location.origin;
+      const targetUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${encodeURIComponent(googleClientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=id_token&scope=openid%20email%20profile&nonce=${Date.now()}`;
+      window.location.href = targetUrl;
+      return;
+    }
+
+    // Option 3: Prompt user if env variable is missing
+    const enteredEmail = prompt('Google Client ID is not set. Enter your email to log in with Google account:');
+    if (enteredEmail) {
+      setIsLoading(true);
+      const name = enteredEmail.split('@')[0];
+      loginWithGoogleUser({
+        email: enteredEmail.trim(),
+        name,
+        avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(name)}`,
+      })
+        .then(() => router.push('/tasks'))
+        .catch(err => setErrorMessage(err.message))
+        .finally(() => setIsLoading(false));
     }
   };
 
@@ -126,8 +141,8 @@ export default function LoginPage() {
         </div>
 
         {/* Main Card Container */}
-        <Card className="w-full p-4 sm:p-4   bg-card border-border/80 shadow-xs rounded-[32px]">
-          <CardHeader className="text-center pb-2 pt-2 px-0 ">
+        <Card className="w-full p-6 sm:p-8 bg-card border-border/80 shadow-xs rounded-[32px]">
+          <CardHeader className="text-center pb-5 pt-1 px-0 space-y-1.5">
             <CardTitle className="text-2xl sm:text-[26px] font-bold tracking-tight text-foreground">
               Let&apos;s get back on track
             </CardTitle>
