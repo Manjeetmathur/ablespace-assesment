@@ -6,7 +6,8 @@
   "scripts": {
     "build": "tsc",
     "start": "tsc && node dist/main.js",
-    "dev": "nodemon src/main.ts"
+    "dev": "nodemon src/main.ts",
+    "seed": "npx ts-node scripts/seed.ts"
   },
   "dependencies": {
     "@nestjs/common": "^10.0.0",

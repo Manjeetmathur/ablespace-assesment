@@ -15,7 +15,7 @@ export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const googleInitializedRef = useRef(false);
+  const googleScriptLoadedRef = useRef(false);
 
   // Redirect if already logged in
   useEffect(() => {
@@ -24,10 +24,9 @@ export default function LoginPage() {
     }
   }, [isAuthenticated, router]);
 
-  // Load Google GIS SDK script
+  // Load Google GIS SDK script immediately on page mount
   useEffect(() => {
-    const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
-    if (!googleClientId || typeof window === 'undefined' || googleInitializedRef.current) return;
+    if (typeof window === 'undefined') return;
 
     const scriptId = 'google-gsi-sdk';
     if (!document.getElementById(scriptId)) {
@@ -37,9 +36,11 @@ export default function LoginPage() {
       script.async = true;
       script.defer = true;
       script.onload = () => {
-        googleInitializedRef.current = true;
+        googleScriptLoadedRef.current = true;
       };
       document.body.appendChild(script);
+    } else {
+      googleScriptLoadedRef.current = true;
     }
   }, []);
 
@@ -57,11 +58,22 @@ export default function LoginPage() {
     }
   };
 
-  const handleGoogleLogin = () => {
+  const handleGoogleLogin = async () => {
     setErrorMessage(null);
     const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
 
-    // Option 1: Official Google OAuth 2.0 Token Client Popup
+    // Wait briefly for Google GIS script if user clicks immediately on page load
+    if (typeof window !== 'undefined' && !(window as any).google?.accounts?.oauth2) {
+      setIsLoading(true);
+      let attempts = 0;
+      while (!(window as any).google?.accounts?.oauth2 && attempts < 20) {
+        await new Promise(res => setTimeout(res, 100));
+        attempts++;
+      }
+      setIsLoading(false);
+    }
+
+    // Trigger official Google OAuth 2.0 Token Client Popup
     if (googleClientId && (window as any).google?.accounts?.oauth2) {
       try {
         const client = (window as any).google.accounts.oauth2.initTokenClient({
@@ -84,20 +96,12 @@ export default function LoginPage() {
         client.requestAccessToken();
         return;
       } catch (err) {
-        console.warn('Token client popup fallback', err);
+        console.warn('Google token client popup error:', err);
       }
     }
 
-    // Option 2: Web OAuth Redirect fallback
-    if (googleClientId) {
-      const redirectUri = window.location.origin;
-      const targetUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${encodeURIComponent(googleClientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=id_token&scope=openid%20email%20profile&nonce=${Date.now()}`;
-      window.location.href = targetUrl;
-      return;
-    }
-
-    // Option 3: Prompt user if env variable is missing
-    const enteredEmail = prompt('Google Client ID is not set. Enter your email to log in with Google account:');
+    // Fallback: Prompt for email if NEXT_PUBLIC_GOOGLE_CLIENT_ID is not configured in environment
+    const enteredEmail = prompt('Google Client ID (NEXT_PUBLIC_GOOGLE_CLIENT_ID) is not set in env.\nEnter your Google email to log in:');
     if (enteredEmail) {
       setIsLoading(true);
       const name = enteredEmail.split('@')[0];
